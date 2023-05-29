@@ -1,0 +1,292 @@
+'Author: James G Knudson
+'
+'
+
+Option Explicit
+
+Dim ie As IEWindow
+Dim htmlDoc As HTMLDocument
+Dim userID As String
+Dim g2aContainers As Scripting.Dictionary
+Dim a2gContainers As Scripting.Dictionary
+
+Private Sub SweepToolInit()
+    Application.DisplayAlerts = False
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    
+    userID = ThisWorkbook.Sheets("Sweeper").Range("C3").Text
+    
+    If Not IsUserID(userID) Then
+        ThisWorkbook.Activate
+        Call MsgBox("You must first scan or type in your badge number.", vbOKOnly + vbExclamation, "Badge Number Missing")
+        Exit Sub
+    End If
+    
+    Set ie = Factory.CreateIEWindow()
+    If ie Is Nothing Then
+        Exit Sub
+    End If
+    
+    Set htmlDoc = ie.GetHTMLDoc()
+    
+End Sub
+
+Private Function IsUserID(id As String)
+    If Not id = "" Then
+        IsUserID = True
+    Else
+        IsUserID = False
+    End If
+End Function
+
+Private Sub MoveContainerByURL(destinationID As String, containerID As String)
+    ie.NavTo ("http://sortcenter-menu-na.amazon.com/containerization/activities/moveContainer.jsp?containerId=" & _
+        WorksheetFunction.EncodeURL(containerID) & "&destinationContainerId=" & WorksheetFunction.EncodeURL(destinationID))
+    
+    ie.Wait
+End Sub
+
+Sub Sweep()
+    Dim lastRow As Integer
+    Dim currentRow As Integer
+    Dim destinationID As String
+    Dim containerID As String
+    Dim status As String
+    Dim msg
+    Dim sortCode As String
+    Dim previousSortCode As String
+    Dim useIndividualDestinationID As Boolean
+    Dim g2aSheet As Worksheet
+    Dim a2gSheet As Worksheet
+    Dim g2aDataRange As Range
+    Dim a2gDataRange As Range
+    Dim sngStartTime As Single
+    Dim sngTotalTime As Single
+    sngStartTime = Timer
+    
+    SweepToolInit
+    
+    Set g2aSheet = ThisWorkbook.Sheets("G2A_Containers")
+    Set a2gSheet = ThisWorkbook.Sheets("A2G_Containers")
+    
+    Set g2aDataRange = g2aSheet.Range("E4:F" & g2aSheet.Range("F" & Rows.Count).End(xlUp).row + 1)
+    Set a2gDataRange = a2gSheet.Range("E4:F" & a2gSheet.Range("F" & Rows.Count).End(xlUp).row + 1)
+    
+    Set g2aContainers = ExcelDataToDictionary(g2aDataRange)
+    Set a2gContainers = ExcelDataToDictionary(a2gDataRange)
+    
+    lastRow = ThisWorkbook.Sheets("Sweeper").Range("E" & Rows.Count).End(xlUp).row + 1
+    currentRow = 4
+    useIndividualDestinationID = False
+    destinationID = ThisWorkbook.Sheets("Sweeper").Range("C5")
+    If destinationID = "" Then
+        useIndividualDestinationID = True
+    End If
+    If ThisWorkbook.Sheets("Sweeper").Range("F" & currentRow) = "" Then
+        EndSweep
+        Exit Sub
+    End If
+    Do
+        containerID = ThisWorkbook.Sheets("Sweeper").Range("E" & currentRow)
+        sortCode = ThisWorkbook.Sheets("Sweeper").Range("F" & currentRow)
+        If useIndividualDestinationID = True Then
+            If sortCode <> previousSortCode Then
+                destinationID = SetDestinationID(sortCode)
+            End If
+        End If
+        MoveContainerByURL destinationID, containerID
+        status = GetStatusFromHTML()
+        If status <> "Container Successfully Moved" And _
+            status <> "Container Already Scanned To Destination" And _
+            status <> "InvalidContainerID" And _
+            status <> "Error: Package does not belong to this building" Then
+            Application.DisplayAlerts = True
+            Application.EnableEvents = True
+            Application.ScreenUpdating = True
+            msg = MsgBox(status)
+            EndSweep
+            Exit Sub
+        End If
+        
+        ThisWorkbook.Sheets("Sweeper").Range("G" & currentRow) = status
+        
+        currentRow = currentRow + 1
+        previousSortCode = sortCode
+    Loop Until currentRow = lastRow
+    
+    EndSweep
+    sngTotalTime = Timer - sngStartTime
+    'MsgBox "Time taken:  " & (sngTotalTime \ 60) & " minutes, " & (sngTotalTime Mod 60) & " seconds"
+End Sub
+
+Private Function GetStatusFromHTML()
+    Dim output As String
+    output = htmlDoc.body.innerText
+    If InStr(output, "InvalidDestinationId") Or InStr(output, "UnrecognizedContainer") Or InStr(output, "TrailerNotFound") Then
+        GetStatusFromHTML = "Error: Invalid Destination ID"
+    ElseIf InStr(output, "ContainerMoved") Then
+        GetStatusFromHTML = "Container Successfully Moved"
+    ElseIf InStr(output, "MovementToSameParent") Then
+        GetStatusFromHTML = "Container Already Scanned To Destination"
+    ElseIf InStr(output, "ContainerClosed") Or InStr(output, "TrailerClosed") Then
+        GetStatusFromHTML = "Error: Destination Container Is Closed"
+    ElseIf InStr(output, "InvalidContainerID") Then
+        GetStatusFromHTML = "InvalidContainerID"
+    ElseIf InStr(output, "ContainerNotClosed") Then
+        GetStatusFromHTML = "Error: Container Not Closed"
+    ElseIf InStr(output, "UnexpectedNode") Then
+        GetStatusFromHTML = "Error: Package does not belong to this building"
+    Else
+        GetStatusFromHTML = "Unknown Error"
+    End If
+End Function
+
+Private Function SetDestinationID(sortCode As String)
+    If g2aContainers.Exists(sortCode & "-Sweep") Then
+        SetDestinationID = g2aContainers(sortCode & "-Sweep")
+    ElseIf a2gContainers.Exists(sortCode & " Virtual") Then
+        SetDestinationID = a2gContainers(sortCode & " Virtual")
+    ElseIf sortCode Like "????????-????-????-????-????????????" Then
+        SetDestinationID = sortCode
+    End If
+
+End Function
+
+'
+Private Function ExcelDataToDictionary(dataRange As Range) As Scripting.Dictionary
+    ' Create a new Dictionary
+    Dim myDictionary As Scripting.Dictionary
+    Set myDictionary = New Scripting.Dictionary
+    
+    ' Read data from the range and add it to the Dictionary
+    Dim cell As Range
+    For Each cell In dataRange.Columns(1).Cells
+        Dim key As Variant
+        Dim value As Variant
+        
+        key = cell.value
+        value = cell.Offset(0, 1).value
+        
+        ' Check if the key is not empty and does not already exist in the dictionary
+        If Not IsEmpty(key) And Not myDictionary.Exists(key) Then
+            myDictionary.Add key, value
+        End If
+    Next cell
+    
+    ' Returns the newly populated dictionary
+    Set ExcelDataToDictionary = myDictionary
+    
+End Function
+
+Sub EndSweep()
+    On Error Resume Next
+    ie.CloseBrowser
+    Set ie = Nothing
+    Set htmlDoc = Nothing
+End Sub
+
+Private Sub OpenContainerByURL()
+
+End Sub
+
+Sub OpenContainers()
+    
+End Sub
+
+Private Sub CloseContainerByURL(containerID As String)
+    ie.NavTo ("http://sortcenter-menu-na.amazon.com/containerization/activities/closeContainer.jsp?containerId=" & containerID)
+End Sub
+
+Private Sub SetContainerWeight(containerID As String)
+    Dim script As String
+    
+    ie.GoToContainerAttributes
+    
+    script = "sd.setText('" & containerID & "')"
+    htmlDoc.parentWindow.execScript (script)
+    htmlDoc.parentWindow.execScript ("sd.commit()")
+    While htmlDoc.GetElementByID("sd_message").innerText <> "Enter weight"
+        ie.Wait
+    Wend
+    script = "sd.setText('300')"
+    htmlDoc.parentWindow.execScript (script)
+    htmlDoc.parentWindow.execScript ("sd.commit()")
+    While htmlDoc.GetElementByID("infodisplay").innerText <> "Weight stored: 300lb"
+        If InStr(htmlDoc.GetElementByID("infodisplay").innerText, "Rate exceeded") Then
+            htmlDoc.parentWindow.execScript (script)
+            htmlDoc.parentWindow.execScript ("sd.commit()")
+        End If
+        ie.Wait
+    Wend
+End Sub
+
+Sub CloseContainers()
+    Dim a2gSheet As Worksheet
+    Dim dataRange As Range
+    
+    Set a2gSheet = ThisWorkbook.Sheets("A2G_Containers")
+    Set dataRange = a2gSheet.Range("E4:F" & a2gSheet.Range("F" & Rows.Count).End(xlUp).row + 1)
+    
+    SweepToolInit
+    
+    Set a2gContainers = ExcelDataToDictionary(dataRange)
+    Dim container
+    For Each container In a2gContainers
+        SetContainerWeight (a2gContainers(container))
+        CloseContainerByURL (a2gContainers(container))
+    Next container
+    EndSweep
+End Sub
+
+Sub MoveULDsToTrailers()
+    Dim dockDoorsDataRange As Range
+    Dim a2gDataRange As Range
+    Dim dockDoorIds As Scripting.Dictionary
+    Dim dockDoorElement As IHTMLElement
+    Dim dockDoorParent As IHTMLElement
+    Dim dockDoor As String
+    Dim doorNumberElement As IHTMLElement
+    Dim timerStart As Single
+    
+    SweepToolInit
+    Set dockDoorsDataRange = ThisWorkbook.Sheets("Dock_Door_Ids").Range("A1:B45")
+    Set dockDoorIds = ExcelDataToDictionary(dockDoorsDataRange)
+    Set a2gDataRange = ThisWorkbook.Sheets("A2G_Containers").Range("E4:E" & ThisWorkbook.Sheets("A2G_Containers").Range("E" & Rows.Count).End(xlUp).row + 1)
+    Set a2gContainers = ExcelDataToDictionary(a2gDataRange)
+    
+    ie.GoToTrickle
+    
+    Dim container As Variant
+    For Each container In a2gContainers
+        Dim script As String
+        Dim piv_0 As IHTMLElement
+        script = "sd.setText('" & a2gContainers(container) & "')"
+        htmlDoc.parentWindow.execScript (script)
+        htmlDoc.parentWindow.execScript ("sd.commit()")
+        Do
+            Set piv_0 = htmlDoc.GetElementByID("piv_0")
+        Loop Until Not piv_0 Is Nothing
+        timerStart = Timer
+        Do
+            Set dockDoorElement = ie.GetElementByTagAndValue("strong", "Dock Door")
+        Loop Until Not dockDoorElement Is Nothing Or Timer - timerStart > 1
+        If Not dockDoorElement Is Nothing Then
+            Set doorNumberElement = dockDoorElement.NextSibling
+            dockDoor = doorNumberElement.innerText
+            script = "sd.setText('" & dockDoorIds(dockDoor) & "')"
+            htmlDoc.parentWindow.execScript (script)
+            htmlDoc.parentWindow.execScript ("sd.commit()")
+            ie.Wait
+            Dim infodisplay, infodisplay_add As IHTMLElement
+            Set infodisplay = htmlDoc.GetElementByID("infodisplay")
+            Set infodisplay_add = htmlDoc.GetElementByID("infodisplay_add")
+            While InStr(infodisplay.innerText, a2gContainers(container)) <> 0 And _
+                InStr(infodisplay_add.innerText, "Package already scanned to Container") <> 0
+                ie.Wait
+            Wend
+        End If
+        ie.GoToTrickle
+    Next container
+    EndSweep
+End Sub

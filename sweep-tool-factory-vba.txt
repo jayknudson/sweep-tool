@@ -1,0 +1,16 @@
+'Written by James Knudson
+'
+'
+Option Explicit
+
+Public Function CreateIEWindow(Optional address As String = "")
+    Dim ie As New IEWindow
+    ie.InitializeVariables address:=address
+    'ie.InitializeBrowser (title)
+    If Not ie.IsGoodConnection Then
+        Call MsgBox("There is a problem with the connection. Make sure you are connected to the network and you have web access.", vbOKOnly + vbExclamation, "Connection Error")
+        ie.CloseBrowser
+        Set ie = Nothing
+    End If
+    Set CreateIEWindow = ie
+End Function

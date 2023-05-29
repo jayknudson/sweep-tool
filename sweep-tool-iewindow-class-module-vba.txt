@@ -1,0 +1,155 @@
+'Written by James Knudson
+'
+'
+Option Explicit
+
+Private m_browser As InternetExplorer
+Private m_doc As HTMLDocument
+
+Public Sub InitializeVariables(Optional address As String = "")
+    Call InitializeBrowser(address)
+End Sub
+
+Public Sub InitializeBrowser(address As String)
+    Set m_browser = New InternetExplorerMedium
+    m_browser.Visible = True
+    '.Left = 25
+    '.Top = 25
+    '.Height = 700
+    '.Width = 1300
+    AppActivate ("Internet Explorer")
+        
+    If address = "" Then
+        NavToFCMenu
+    Else
+        NavTo (address)
+    End If
+    Set m_doc = m_browser.Document
+    
+    SubmitID
+    GoToBuild
+    
+End Sub
+
+Public Function IsGoodConnection()
+    If m_doc.nameProp = "This page can’t be displayed" Then
+        ThisWorkbook.Activate
+        'Call MsgBox("There is a problem with the connection. Make sure you are connected to the network and you have web access.", vbOKOnly + vbExclamation, "Connection Error")
+        Application.DisplayAlerts = True
+        Application.EnableEvents = True
+        Application.ScreenUpdating = True
+        Set m_browser = Nothing
+        Set m_doc = Nothing
+        IsGoodConnection = False
+    Else
+        Do While m_browser.LocationURL Like "*/survey" Or m_browser.LocationURL Like "*/location"
+            Application.Wait (Now + TimeValue("0:00:3"))
+        Loop
+        IsGoodConnection = True
+    End If
+End Function
+
+Public Sub Wait()
+    With m_browser
+        While .Busy Or .ReadyState <> READYSTATE_COMPLETE
+            DoEvents
+        Wend
+        While .Document.ReadyState <> "complete"
+            DoEvents
+        Wend
+    End With
+End Sub
+
+Public Sub CloseBrowser()
+    m_browser.Quit
+    Set m_browser = Nothing
+    Set m_doc = Nothing
+End Sub
+
+Private Function NavToFCMenu()
+    NavToFCMenu = NavTo("fcmenu-iad-regionalized.corp.amazon.com/basic/login/")
+End Function
+
+Private Function NavToCPT()
+    NavToCPT = NavTo("trans-logistics.amazon.com/ssp/dock/hrz/cpt")
+End Function
+
+Public Function NavTo(url As String)
+    m_browser.Navigate url
+    Wait
+    If m_browser.LocationURL = url Then
+        NavTo = True
+    Else
+        NavTo = False
+    End If
+End Function
+
+Private Sub GoToSort()
+    NavTo ("http://fcmenu-iad-regionalized.corp.amazon.com/KBWI/process/4")
+End Sub
+
+Private Sub GoToBuild()
+    NavTo ("http://fcmenu-iad-regionalized.corp.amazon.com/KBWI/entry/103")
+End Sub
+
+Public Sub GoToContainerAttributes()
+    NavTo ("http://sortcenter-menu-na.amazon.com/containerization/containerAttributes")
+End Sub
+
+Public Sub GoToFlow()
+    NavTo ("http://sortcenter-menu-na.amazon.com/containerization/flow")
+End Sub
+
+Public Sub GoToTrickle()
+    NavTo ("http://sortcenter-menu-na.amazon.com/containerization/trickle")
+End Sub
+
+Public Sub GoToCloseContainer()
+    NavTo ("http://sortcenter-menu-na.amazon.com/containerization/closeContainer")
+End Sub
+
+Public Sub GoToCreateContainer()
+    NavTo ("http://sortcenter-menu-na.amazon.com/containerization/createContainer")
+End Sub
+
+Public Sub GoToMergeContainer()
+    NavTo ("http://sortcenter-menu-na.amazon.com/containerization/mergeContainer")
+End Sub
+
+Public Function GetElementByTagAndValue(tag As String, value As String) As IHTMLElement
+    Dim elem As IHTMLElement
+    For Each elem In m_doc.getElementsByTagName(tag)
+        If InStr(elem.innerText, value) > 0 Then
+        Set GetElementByTagAndValue = elem
+            Exit For
+        End If
+    Next
+End Function
+
+Private Sub SubmitID()
+    Dim userID As String
+    Dim loginForm As HTMLFormElement
+    Dim passwordInputBox As HTMLInputElement
+    userID = ThisWorkbook.Sheets("Sweeper").Range("C3").Text
+    Set loginForm = m_doc.forms(0)
+    Set passwordInputBox = loginForm.elements("badgeBarcodeId")
+    passwordInputBox.value = userID
+    passwordInputBox.form.submit
+    Wait
+End Sub
+
+Public Property Get GetBrowser() As InternetExplorer
+    Set GetBrowser = m_browser
+End Property
+
+Public Property Get GetHTMLDoc() As HTMLDocument
+    Set GetHTMLDoc = m_doc
+End Property
+
+Private Sub Class_Initialize()
+
+End Sub
+
+Private Sub Class_Terminate()
+
+End Sub
